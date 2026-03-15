@@ -445,6 +445,16 @@
   </div>
 </div>
 
+<div id="passwordOverlay" style="position:fixed;inset:0;background:#0f172a;display:flex;align-items:center;justify-content:center;z-index:9999">
+  <div style="background:#1e293b;border:1px solid #334155;border-radius:14px;padding:32px;width:340px;max-width:92vw;text-align:center">
+    <div style="font-size:22px;font-weight:800;color:#f59e0b;margin-bottom:4px">Doraji <span style="color:#f1f5f9;font-weight:400">at The Well</span></div>
+    <div style="font-size:12px;color:#94a3b8;margin-bottom:24px">Enter password to continue</div>
+    <input id="pwInput" type="password" placeholder="Password" style="width:100%;background:#273449;border:1px solid #334155;border-radius:7px;color:#f1f5f9;padding:10px 14px;font-size:14px;font-family:inherit;outline:none;margin-bottom:10px" onkeydown="if(event.key==='Enter')checkPassword()">
+    <div id="pwError" style="font-size:12px;color:#ef4444;min-height:18px;margin-bottom:10px"></div>
+    <button onclick="checkPassword()" style="width:100%;background:#f59e0b;border:none;border-radius:7px;color:#000;font-size:14px;font-weight:700;padding:10px;cursor:pointer">Unlock</button>
+  </div>
+</div>
+
 <div class="toast-wrap" id="toastWrap"></div>
 
 <!-- HEADER -->
@@ -486,6 +496,13 @@
         <div class="stat-card"><div class="stat-val" id="sTodayCat">—</div><div class="stat-label">Day Type</div></div>
         <div class="stat-card"><div class="stat-val" id="sTodayTemp">—</div><div class="stat-label">High Temp</div></div>
         <div class="stat-card"><div class="stat-val" id="sTodayEvents">—</div><div class="stat-label">Nearby Events</div></div>
+      </div>
+    </div>
+
+    <div>
+      <div class="panel-title">Upcoming Home Games</div>
+      <div id="homeGamesPanel" style="display:flex;flex-direction:column;gap:5px">
+        <div style="font-size:12px;color:var(--text-muted)">Loading...</div>
       </div>
     </div>
 
@@ -845,6 +862,7 @@ function loadEvents() {
     ...customEvents,
   ];
   updateBadges();
+  renderHomeGames();
 }
 
 function getEventsForDate(d) {
@@ -880,6 +898,35 @@ function updateBadges() {
   document.getElementById('bFestival').textContent= c.festival;
   document.getElementById('bHoliday').textContent = c.holiday;
   document.getElementById('bCustom').textContent  = c.custom;
+}
+
+function renderHomeGames() {
+  const el = document.getElementById('homeGamesPanel');
+  if (!el) return;
+  const HOME_TEAMS = ['raptors', 'maple leafs', 'blue jays'];
+  const today = dateKey(TODAY);
+  const games = allEvents
+    .filter(e => e.type === 'sports' && HOME_TEAMS.some(t => e.name.toLowerCase().includes(t)))
+    .filter(e => e.date >= today)
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .slice(0, 12);
+
+  if (!games.length) {
+    el.innerHTML = '<div style="font-size:12px;color:var(--text-muted)">No upcoming games found.</div>';
+    return;
+  }
+  const teamIcon = n => n.includes('raptor') ? '🏀' : n.includes('leaf') ? '🏒' : '⚾';
+  el.innerHTML = games.map(g => {
+    const d = parseKey(g.date);
+    const label = d.toLocaleDateString('en-CA', { month:'short', day:'numeric', weekday:'short' });
+    return `<div onclick="selectDate('${g.date}')" style="display:flex;align-items:center;gap:7px;background:var(--surface2);border-radius:6px;padding:6px 8px;cursor:pointer;border:1px solid var(--border);transition:border-color 0.15s" onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">
+      <span style="font-size:15px">${teamIcon(g.name.toLowerCase())}</span>
+      <div style="flex:1;min-width:0">
+        <div style="font-size:11px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${g.name}</div>
+        <div style="font-size:10px;color:var(--text-muted)">${label}</div>
+      </div>
+    </div>`;
+  }).join('');
 }
 
 // ─── SALES PREDICTION ENGINE ──────────────────────────────────────
@@ -1542,8 +1589,29 @@ function showToast(msg, type='success') {
 // ─── MODAL CLOSE ON BACKDROP ──────────────────────────────────────
 document.querySelectorAll('.modal-backdrop').forEach(el=>el.addEventListener('click',e=>{ if(e.target===el) el.classList.remove('open'); }));
 
+// ─── PASSWORD ─────────────────────────────────────────────────────
+function checkPassword() {
+  const val = document.getElementById('pwInput').value;
+  if (val === 'Doraji2024!') {
+    document.getElementById('passwordOverlay').style.display = 'none';
+    sessionStorage.setItem('doraji_auth', '1');
+  } else {
+    document.getElementById('pwError').textContent = 'Incorrect password. Try again.';
+    document.getElementById('pwInput').value = '';
+    document.getElementById('pwInput').focus();
+  }
+}
+if (sessionStorage.getItem('doraji_auth') === '1') {
+  document.getElementById('passwordOverlay').style.display = 'none';
+}
+
 // ─── INIT ─────────────────────────────────────────────────────────
 function init() {
+  // Pre-load API key if not already saved
+  if (!settings.tmKey) {
+    settings.tmKey = 'N1j4dLYaqC1ZGrPHSJxekfC7YAtVRdgT';
+    localStorage.setItem('doraji_settings', JSON.stringify(settings));
+  }
   loadEvents();
   renderCalendar();
   updateRightPanel();
@@ -1552,6 +1620,10 @@ function init() {
   fetchWeather();
   fetchHistoricalWeather();   // Open-Meteo archive — last 2 years, 7-day cache
   if (settings.tmKey) fetchTicketmaster();
+  // Auto-refresh: check every hour, fetch if 24h cache has expired
+  setInterval(() => {
+    if (settings.tmKey && !isTMCacheValid()) fetchTicketmaster();
+  }, 60 * 60 * 1000);
 }
 
 init();
